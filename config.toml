@@ -1,0 +1,17 @@
+esp_toml_version = 1.0
+
+# 固件所在目录（必须是 HTTPS 可访问）
+firmware_images_url = "https://GMU-lhs.github.io/ESP-LaunchPad-Flash/firmware"
+
+# 支持的应用列表
+supported_apps = ["esp32c3_usb"]
+
+[esp32c3_usb]
+# 仅支持 ESP32-C3
+chipsets = ["ESP32-C3"]
+
+# ESP32-C3 single bin 固件
+image.esp32-c3 = "app.bin"
+
+# 固件描述（会显示在 Launchpad 页面）
+description = "ESP32-C3 USB 在线烧录固件（ESP Launchpad）"
