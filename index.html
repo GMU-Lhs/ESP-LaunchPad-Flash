@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>ESP32-C3 USB 在线烧录</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 </head>
 
 <body style="
@@ -23,6 +23,8 @@
   <!-- ESP Launchpad 跳转入口 -->
   <a
     href="https://esp.eterill.xyz/?flashConfigURL=https://GMU-lhs.github.io/ESP-LaunchPad-Flash/config.toml"
+    target="_blank"
+    rel="noopener"
   >
     <img
       src="https://esp.eterill.xyz/assets/try_with_launchpad.png"
@@ -36,90 +38,132 @@
     无需安装任何软件
   </p>
 
+  <!-- 分割线 -->
+  <hr style="margin:40px auto; max-width:600px;">
+
+  <h3>ESP32-C3 USB 串口通信</h3>
+  <p style="color:#666;font-size:14px;">
+    烧录完成后，点击下方按钮连接 ESP32-C3 串口（Web Serial）
+  </p>
+
+  <div style="max-width:720px;margin:0 auto;background:#fff;padding:16px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,.08);text-align:left;">
+
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;align-items:center;">
+      <button id="connect">连接串口</button>
+      <button id="disconnect" disabled>断开</button>
+      <button id="clear">清屏</button>
+
+      <label style="margin-left:auto;display:flex;gap:6px;align-items:center;">
+        波特率：
+        <select id="baud">
+          <option value="115200">115200</option>
+          <option value="921600">921600</option>
+          <option value="9600">9600</option>
+        </select>
+      </label>
+    </div>
+
+    <pre id="log" style="height:260px;overflow:auto;background:#0d1117;color:#d1e7ff;padding:10px;border-radius:8px;margin:0;white-space:pre-wrap;"></pre>
+
+    <div style="display:flex;gap:10px;margin-top:10px;">
+      <input id="input" placeholder="输入内容，回车发送" style="flex:1;padding:8px;border-radius:8px;border:1px solid #ddd;">
+      <button id="send" disabled>发送</button>
+    </div>
+  </div>
+
+  <script>
+    let port, reader, writer;
+
+    // 元素引用（必须先拿到）
+    const elLog = document.getElementById("log");
+    const btnConnect = document.getElementById("connect");
+    const btnDisconnect = document.getElementById("disconnect");
+    const btnClear = document.getElementById("clear");
+    const selBaud = document.getElementById("baud");
+    const input = document.getElementById("input");
+    const btnSend = document.getElementById("send");
+
+    const log = (s) => {
+      elLog.textContent += s;
+      elLog.scrollTop = elLog.scrollHeight;
+    };
+
+    btnConnect.onclick = async () => {
+      try {
+        if (!("serial" in navigator)) {
+          alert("当前浏览器不支持 Web Serial，请使用桌面版 Chrome / Edge。");
+          return;
+        }
+
+        // 用户选择串口设备
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: Number(selBaud.value) });
+
+        // 写入端
+        writer = port.writable.getWriter();
+
+        // 读取端：字节流 -> 字符串
+        const decoder = new TextDecoderStream();
+        const readableClosed = port.readable.pipeTo(decoder.writable);
+        reader = decoder.readable.getReader();
+
+        log("[已连接串口]\n");
+
+        btnSend.disabled = false;
+        btnDisconnect.disabled = false;
+        btnConnect.disabled = true;
+
+        // 读取循环
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (value) log(value);
+        }
+
+        await readableClosed.catch(() => {});
+      } catch (e) {
+        log(`[连接失败] ${e.message}\n`);
+        await safeClose();
+        btnSend.disabled = true;
+        btnDisconnect.disabled = true;
+        btnConnect.disabled = false;
+      }
+    };
+
+    async function safeClose() {
+      try { await reader?.cancel(); } catch {}
+      try { reader?.releaseLock(); } catch {}
+      try { writer?.releaseLock(); } catch {}
+      try { await port?.close(); } catch {}
+      reader = null; writer = null; port = null;
+    }
+
+    btnDisconnect.onclick = async () => {
+      await safeClose();
+      log("[已断开]\n");
+      btnSend.disabled = true;
+      btnDisconnect.disabled = true;
+      btnConnect.disabled = false;
+    };
+
+    btnSend.onclick = async () => {
+      if (!writer) return;
+      const text = input.value + "\n";
+      input.value = "";
+      await writer.write(new TextEncoder().encode(text));
+    };
+
+    input.onkeydown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        btnSend.click();
+      }
+    };
+
+    btnClear.onclick = () => {
+      elLog.textContent = "";
+    };
+  </script>
+
 </body>
 </html>
-<hr style="margin:40px auto; max-width:600px;">
-
-<h3>ESP32-C3 USB 串口通信</h3>
-<p style="color:#666;font-size:14px;">
-  烧录完成后，点击下方按钮连接 ESP32-C3 串口
-</p>
-
-<div style="max-width:720px;margin:0 auto;background:#fff;padding:16px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,.08);">
-
-  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
-    <button id="connect">连接串口</button>
-    <button id="disconnect" disabled>断开</button>
-    <button id="clear">清屏</button>
-
-    <select id="baud" style="margin-left:auto;">
-      <option value="115200">115200</option>
-      <option value="921600">921600</option>
-      <option value="9600">9600</option>
-    </select>
-  </div>
-
-  <pre id="log" style="height:260px;overflow:auto;background:#0d1117;color:#d1e7ff;padding:10px;border-radius:8px;"></pre>
-
-  <div style="display:flex;gap:10px;margin-top:10px;">
-    <input id="input" placeholder="输入内容，回车发送" style="flex:1;padding:8px;">
-    <button id="send" disabled>发送</button>
-  </div>
-</div>
-
-<script>
-let port, reader, writer;
-const log = s => {
-  const el = document.getElementById("log");
-  el.textContent += s;
-  el.scrollTop = el.scrollHeight;
-};
-
-document.getElementById("connect").onclick = async () => {
-  if (!navigator.serial) {
-    alert("请使用 Chrome / Edge 桌面浏览器");
-    return;
-  }
-  port = await navigator.serial.requestPort();
-  await port.open({ baudRate: +baud.value });
-
-  writer = port.writable.getWriter();
-  const decoder = new TextDecoderStream();
-  port.readable.pipeTo(decoder.writable);
-  reader = decoder.readable.getReader();
-
-  log("[已连接串口]\n");
-  send.disabled = false;
-  disconnect.disabled = false;
-  connect.disabled = true;
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    if (value) log(value);
-  }
-};
-
-disconnect.onclick = async () => {
-  await reader?.cancel();
-  await writer?.releaseLock();
-  await port?.close();
-  log("[已断开]\n");
-  send.disabled = true;
-  disconnect.disabled = true;
-  connect.disabled = false;
-};
-
-send.onclick = async () => {
-  const text = input.value + "\n";
-  input.value = "";
-  await writer.write(new TextEncoder().encode(text));
-};
-
-input.onkeydown = e => {
-  if (e.key === "Enter") send.onclick();
-};
-
-clear.onclick = () => log("");
-</script>
-
