@@ -71,99 +71,144 @@
     </div>
   </div>
 
-  <script>
-    let port, reader, writer;
+<script>
+let port, reader, writer;
 
-    // 元素引用（必须先拿到）
-    const elLog = document.getElementById("log");
-    const btnConnect = document.getElementById("connect");
-    const btnDisconnect = document.getElementById("disconnect");
-    const btnClear = document.getElementById("clear");
-    const selBaud = document.getElementById("baud");
-    const input = document.getElementById("input");
-    const btnSend = document.getElementById("send");
+const elLog = document.getElementById("log");
+const btnConnect = document.getElementById("connect");
+const btnDisconnect = document.getElementById("disconnect");
+const btnClear = document.getElementById("clear");
+const selBaud = document.getElementById("baud");
+const input = document.getElementById("input");
+const btnSend = document.getElementById("send");
 
-    const log = (s) => {
-      elLog.textContent += s;
-      elLog.scrollTop = elLog.scrollHeight;
-    };
+let lineBuf = "";           // 用来拼接不完整的一行
+let outQueue = [];          // 输出队列（提升性能）
+let flushTimer = null;
+const MAX_LOG_CHARS = 200000; // 日志太长会卡，做个上限
 
-    btnConnect.onclick = async () => {
-      try {
-        if (!("serial" in navigator)) {
-          alert("当前浏览器不支持 Web Serial，请使用桌面版 Chrome / Edge。");
-          return;
-        }
+function ts() {
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  const ms = String(d.getMilliseconds()).padStart(3, "0");
+  return `${hh}:${mm}:${ss}.${ms}`;
+}
 
-        // 用户选择串口设备
-        port = await navigator.serial.requestPort();
-        await port.open({ baudRate: Number(selBaud.value) });
+// 把文本放进队列，定时批量刷新 DOM（避免卡顿/“像丢数据”）
+function enqueue(text) {
+  outQueue.push(text);
+  if (!flushTimer) {
+    flushTimer = setTimeout(() => {
+      flushTimer = null;
+      const chunk = outQueue.join("");
+      outQueue = [];
+      elLog.textContent += chunk;
 
-        // 写入端
-        writer = port.writable.getWriter();
-
-        // 读取端：字节流 -> 字符串
-        const decoder = new TextDecoderStream();
-        const readableClosed = port.readable.pipeTo(decoder.writable);
-        reader = decoder.readable.getReader();
-
-        log("[已连接串口]\n");
-
-        btnSend.disabled = false;
-        btnDisconnect.disabled = false;
-        btnConnect.disabled = true;
-
-        // 读取循环
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          if (value) log(value);
-        }
-
-        await readableClosed.catch(() => {});
-      } catch (e) {
-        log(`[连接失败] ${e.message}\n`);
-        await safeClose();
-        btnSend.disabled = true;
-        btnDisconnect.disabled = true;
-        btnConnect.disabled = false;
+      // 限制日志长度，避免越跑越卡
+      if (elLog.textContent.length > MAX_LOG_CHARS) {
+        elLog.textContent = elLog.textContent.slice(-MAX_LOG_CHARS);
       }
-    };
 
-    async function safeClose() {
-      try { await reader?.cancel(); } catch {}
-      try { reader?.releaseLock(); } catch {}
-      try { writer?.releaseLock(); } catch {}
-      try { await port?.close(); } catch {}
-      reader = null; writer = null; port = null;
+      elLog.scrollTop = elLog.scrollHeight;
+    }, 50);
+  }
+}
+
+function setUi(connected) {
+  btnConnect.disabled = connected;
+  btnDisconnect.disabled = !connected;
+  btnSend.disabled = !connected;
+}
+
+async function safeClose() {
+  try { await reader?.cancel(); } catch {}
+  try { reader?.releaseLock(); } catch {}
+  try { writer?.releaseLock(); } catch {}
+  try { await port?.close(); } catch {}
+  reader = null; writer = null; port = null;
+}
+
+btnClear.onclick = () => { elLog.textContent = ""; };
+
+btnConnect.onclick = async () => {
+  try {
+    if (!("serial" in navigator)) {
+      alert("当前浏览器不支持 Web Serial，请用桌面版 Chrome / Edge。");
+      return;
     }
 
-    btnDisconnect.onclick = async () => {
-      await safeClose();
-      log("[已断开]\n");
-      btnSend.disabled = true;
-      btnDisconnect.disabled = true;
-      btnConnect.disabled = false;
-    };
+    // 让用户选择串口（注意：如果选错口/被占用会 open 失败）
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: Number(selBaud.value) });
 
-    btnSend.onclick = async () => {
-      if (!writer) return;
-      const text = input.value + "\n";
-      input.value = "";
-      await writer.write(new TextEncoder().encode(text));
-    };
+    writer = port.writable.getWriter();
 
-    input.onkeydown = (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        btnSend.click();
+    // 读：Uint8Array -> string
+    const decoder = new TextDecoderStream();
+    const readableClosed = port.readable.pipeTo(decoder.writable);
+    reader = decoder.readable.getReader();
+
+    enqueue(`[${ts()}] 已连接串口 baud=${selBaud.value}\n`);
+    setUi(true);
+
+    // 读取循环（按行加时间戳）
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      lineBuf += value;
+      lineBuf = lineBuf.replace(/\r\n/g, "\n"); // 统一换行
+
+      const lines = lineBuf.split("\n");
+      lineBuf = lines.pop(); // 最后一段可能是不完整的一行，留着下次拼
+
+      for (const line of lines) {
+        enqueue(`[${ts()}] ${line}\n`);
       }
-    };
+    }
 
-    btnClear.onclick = () => {
-      elLog.textContent = "";
-    };
-  </script>
+    await readableClosed.catch(() => {});
+  } catch (e) {
+    enqueue(`[${ts()}] 连接失败：${e.message}\n`);
+    await safeClose();
+    setUi(false);
+  }
+};
+
+btnDisconnect.onclick = async () => {
+  await safeClose();
+  enqueue(`[${ts()}] 已断开\n`);
+  setUi(false);
+};
+
+btnSend.onclick = async () => {
+  if (!writer) return;
+  const text = input.value;
+  input.value = "";
+  // 发送也加时间戳回显（可选）
+  enqueue(`[${ts()}] >> ${text}\n`);
+  await writer.write(new TextEncoder().encode(text + "\n"));
+};
+
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    btnSend.click();
+  }
+});
+
+// 设备被拔掉/重启时，自动提示
+navigator.serial?.addEventListener("disconnect", async () => {
+  enqueue(`[${ts()}] 设备断开（可能是拔插/重启/烧录后重新枚举）\n`);
+  await safeClose();
+  setUi(false);
+});
+</script>
+
 
 </body>
 </html>
+
