@@ -186,13 +186,13 @@ btnDisconnect.onclick = async () => {
 
 btnSend.onclick = async () => {
   if (!writer) return;
-  const text = input.value;
+  const s = input.value.trim();
   input.value = "";
-  // 发送也加时间戳回显（可选）
-  enqueue(`[${ts()}] >> ${text}\n`);
-  await writer.write(new TextEncoder().encode(text + "\n"));
+  if (!s) return;
+  const cmd = s[0];                 // 只发 1 个字符
+  await writer.write(new TextEncoder().encode(cmd));
 };
-
+  
 input.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     e.preventDefault();
@@ -211,4 +211,5 @@ navigator.serial?.addEventListener("disconnect", async () => {
 
 </body>
 </html>
+
 
